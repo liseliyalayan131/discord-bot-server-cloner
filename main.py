@@ -16,10 +16,10 @@ logger.addFilter(InfoFilter())
 DISCORD_API_BASE_URL = "https://discord.com/api/v9"
 
 ASCII_ART = """
-                                      ___ 
+                                      ___
  ___  _____  ___  ___  ___  ___  ___ |  _|
-| -_||     ||  _|| -_||  _|| . ||   ||  _|
-|___||_|_|_||_|  |___||___||___||_|_||_|  
+| -_||     || _ || -_|| _ || . ||   ||  _|
+|___||_|_|_||_|  |___||___||___||_|_||_| 
 """
 
 def get_headers(token):
@@ -34,10 +34,11 @@ def get_server_data(token, server_id):
         server_info = requests.get(f"{DISCORD_API_BASE_URL}/guilds/{server_id}", headers=headers).json()
         channels = requests.get(f"{DISCORD_API_BASE_URL}/guilds/{server_id}/channels", headers=headers).json()
         roles = requests.get(f"{DISCORD_API_BASE_URL}/guilds/{server_id}/roles", headers=headers).json()
-        return server_info, channels, roles
+        emojis = requests.get(f"{DISCORD_API_BASE_URL}/guilds/{server_id}/emojis", headers=headers).json()
+        return server_info, channels, roles, emojis
     except Exception as e:
         logging.error(f"Error fetching server data: {e}")
-        return None, None, None
+        return None, None, None, None
 
 def delete_role(token, target_server_id, role_id):
     headers = get_headers(token)
@@ -141,13 +142,17 @@ def clone_server(token, source_server_id, target_server_id, user_id):
     os.system("cls" if os.name == "nt" else "clear")
     print(Fore.MAGENTA + ASCII_ART)
 
-    server_info, channels, roles = get_server_data(token, source_server_id)
+def clone_server(token, source_server_id, target_server_id, user_id):
+    os.system("cls" if os.name == "nt" else "clear")
+    print(Fore.MAGENTA + ASCII_ART)
+
+    server_info, channels, roles, emojis = get_server_data(token, source_server_id)
 
     if 'message' in server_info or 'message' in channels or 'message' in roles:
         logging.error(Fore.RED + "Error: Unauthorized. Check if the bot has the necessary permissions and the token is correct.")
         return
 
-    _, target_channels, target_roles = get_server_data(token, target_server_id)
+    _, target_channels, target_roles, _ = get_server_data(token, target_server_id)
 
     logging.info(Fore.YELLOW + "Deleting roles in the target server...")
     for role in target_roles:
@@ -168,9 +173,12 @@ def clone_server(token, source_server_id, target_server_id, user_id):
         if created_role:
             created_roles[role['id']] = created_role['id']
 
-    categories = [ch for ch in channels if ch['type'] == 4] 
-    normal_channels = [ch for ch in channels if ch['type'] != 4]
+    logging.info(Fore.CYAN + "Creating emojis in the target server...")
+    for emoji in emojis:
+        create_emoji(token, target_server_id, emoji)
 
+    categories = [ch for ch in channels if ch['type'] == 4]
+    normal_channels = [ch for ch in channels if ch['type'] != 4]
 
     logging.info(Fore.CYAN + "Creating categories in the target server...")
     category_mapping = {}
@@ -183,9 +191,24 @@ def clone_server(token, source_server_id, target_server_id, user_id):
     for channel in normal_channels:
         if channel['parent_id']:
             channel['parent_id'] = category_mapping.get(channel['parent_id'], None)
-        create_channel(token, target_server_id, channel)
+        created_channel = create_channel(token, target_server_id, channel)
 
-    logging.info(Fore.GREEN + "#codebyemreconf")  
+        if created_channel and "permission_overwrites" in channel:
+            for overwrite in channel["permission_overwrites"]:
+                overwrite_data = {
+                    "id": created_roles.get(overwrite["id"], overwrite["id"]), 
+                    "type": overwrite["type"],
+                    "allow": overwrite["allow"],
+                    "deny": overwrite["deny"]
+                }
+                requests.put(
+                    f"{DISCORD_API_BASE_URL}/channels/{created_channel['id']}/permissions/{overwrite_data['id']}",
+                    headers=headers,
+                    json=overwrite_data
+                )
+
+    logging.info(Fore.GREEN + "#codebyemreconf")
+    send_dm(token, user_id)
 
 if __name__ == "__main__":
     bot_token = input(Fore.BLUE + "Enter your bot token: ")
